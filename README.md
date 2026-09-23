@@ -75,6 +75,9 @@ LLAMA_ATTN_ROT_DISABLE=1 GGML_CUDA_NO_PINNED=1 taskset -c 0-11 \
   -ctk q8_0 -ctv q8_0 \
   -c 131072 \
   -b 2048 -ub 1024 \
+  # agent harnesses that re-send large prompts (compaction-style assistants):
+  # -ub 2048 instead. Measured here: a fresh 60k prompt in 161 s instead of ~234,
+  # cost is ~9% decode t/s, every token. Chat traffic: stay at 1024.
   -t 6 -tb 12 \
   --host 127.0.0.1 --port 8080 \
   --jinja
