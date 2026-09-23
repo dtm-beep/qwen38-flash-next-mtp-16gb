@@ -86,9 +86,18 @@ What the non-obvious flags do:
   10 are touched per step), so they live in RAM and the target's hot-path experts keep the
   GPU. Putting the draft fully on GPU is measurably slower: 15.4 vs 16.5 t/s in my A/B.
 - `--load-mode none --lazy-mode on`: lazy mmap loading, kills the slow cold-load ramp.
-- `--fit on --fit-target 1100`: packs what fits on the GPU and demotes the least useful
-  target bytes to RAM. 1100 is my A/B record value, anything from 800 up to the default
-  that keeps `VmSwap` flat is fine. Load OOM: raise to 1300.
+- `--fit on --fit-target 1100`: `--fit` packs weights onto the GPU, and `--fit-target`
+  is the VRAM **margin in MiB to leave free** afterwards (default 1024). Lower margin =
+  more weights packed on GPU. `1100` is my measured best from an A/B ladder (16.5 t/s,
+  free VRAM at load = exactly the margin). On this box 800, 900, 1100 and 1300 all load
+  cleanly and hold `VmSwap` flat; 2800 loads but measured slower, and 128 crashed when
+  the draft still lived fully on GPU. Load OOM: raise one step (1300). Floor test with
+  `--spec-draft-cpu-moe`: `--fit-target 100` loads fine (14.2 GB used, draft and all) and
+  measures the same decode as any higher margin (16.4-17.5 t/s probes, within noise of
+  the 1100 record). Below 100, the margin still has to cover the draft's GPU share,
+  CUDA graphs and runtime workspace, so do not go lower without testing.
+  Also note: a commented-out `#--fit-target` line does not mean 0, it means the default
+  1024. Only an explicit `--fit-target 0` is 0.
 - `-ctk q8_0 -ctv q8_0`: near-lossless KV at 131k (about 3.2 GB, this lives in the
   budget). Do not try `-ctv q4_0` to save VRAM: the server warns that no FlashAttention
   vector kernel exists for q8_0-q4_0 and converts K/V to f16 on every decode step.
@@ -97,7 +106,12 @@ What the non-obvious flags do:
   prompt size**, and grows to the 8 GiB default cap. On a 64 GB box that already spends
   ~50 GB on the model, that freezes the machine. Keep it off until upstream PR
   [#24785](https://github.com/ggml-org/llama.cpp/pull/24785) (recurrent state shrink for
-  the prompt cache) merges.
+  the prompt cache) merges. If you do enable the cache, the cap must EXCEED your session's
+  prompt state or it silently caches nothing: on this model 40k tokens of q8_0/q8_0 state
+  is ~782 MB, and `--cache-ram 512` logged `prompt state size 782 MiB exceeds cache size
+  limit 512 MiB, skipping` on every request, meaning a full ~150 s prompt reprocess per
+  turn. `--cache-ram 2048` on a 64 GB box caches 2 such sessions, bounds the leak, and
+  cuts first-token wait from minutes to seconds. The cap is host RAM, VRAM is unrelated.
 - `-t` is physical cores, `-tb` is the full thread count of the pool. Mine is a 6-core
   part with HT off behind `taskset 0-11`. Do not give it every core.
 - `--parallel 1` is what my A/B ran with (single stream). With `--cache-ram 0` you can
@@ -114,8 +128,9 @@ graphs reused = 4872                     -> climbing, zero recapture = healthy
 
 - Acceptance is a property of your **request content**, not the config. Cold fresh
   reasoning sits around 0.5-0.57, follow-ups that reuse a long prefix reach 0.7-0.9.
-- On my box: `tg ≈ acceptance × 19 + noise`, roughly. Compare your tg against that line
-  before blaming the build.
+- On my box: `tg ≈ acceptance × 30 + noise`, measured across several runs (14.4 t/s at
+  0.48, 16.5 at 0.55, 17.5 at 0.60). Compare your tg against that line before blaming
+  the build: if acceptance × 30 ≈ your tg, the config is fine, the content is what you got.
 - Acceptance under ~0.30 for your workload: MTP is not paying off here, drop the `-md`
   line and `--spec-type` flags.
 - Judge prompt-processing only from the server's own `prompt eval` lines on full real
