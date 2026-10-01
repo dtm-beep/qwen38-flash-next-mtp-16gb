@@ -19,11 +19,14 @@ experts stream from system RAM, so decode speed is RAM-bandwidth-bound. That is 
 ## Step 1 - Build
 
 Plain upstream master is not enough: it accepts `--spec-type draft-mtp` but cannot load
-this model's MTP head yet. The needed code is upstream PR
-[#28243](https://github.com/ggml-org/llama.cpp/pull/28243) plus one small fix. I carry
-both as a branch on my fork: 11 cherry-picks of the PR, then one commit declaring
+this model's MTP head yet. The upstream PR for this, [#28243](https://github.com/ggml-org/llama.cpp/pull/28243),
+was closed unmerged on 2026-10-01. It was superseded by
+[#29761 "Qwen4Exp: add MTP"](https://github.com/ggml-org/llama.cpp/pull/29761), merged
+2026-10-01 into the feature branch `aman/qwen4-opt` - not into master. So the code is
+still not in plain master, and this branch recipe still applies until that stack lands.
+I carry it on my fork as 11 cherry-picks of #28243 plus one commit declaring
 `nextn.hc_head_norm` as `{ n_embd, hc }` + `TENSOR_ALLOW_RESHAPE` (without it the load
-asserts in `graph_mtp` on recent masters).
+asserts in `graph_mtp` on recent masters. #29761 carries the same declaration).
 
 ```bash
 git clone https://github.com/ggml-org/llama.cpp ~/llama-mtp
@@ -37,8 +40,8 @@ cmake --build . -j -- llama-server
 ```
 
 The checkout is a fixed, consistent tree (base `fb27a525d`), no matter how far master has
-moved since. If PR #28243 has merged by the time you read this, plain master is enough,
-skip the fetch.
+moved since. Once the MTP stack from #29761 (`aman/qwen4-opt`) lands in master, plain
+master is enough and you can skip the fetch. Check the PR page to see if that happened.
 
 ## Step 2 - Download models
 
@@ -94,7 +97,7 @@ A/B this month (see the notes after it). Two deliberate variations:
 
 Sampling flags are the model card's recommended defaults, keep them unless you know
 why you are changing them. If you host a coding agent behind this server, harness-side
-flags like `--tools all`, a reasoning format and chat-template kwargs go on top; they
+flags like `--tools all`, a reasoning format and chat-template kwargs go on top. They
 change the API surface, not the speed.
 
 The two env vars and taskset are kept as-is because every number on this page was
@@ -109,10 +112,10 @@ What the non-obvious flags do:
 - `--load-mode none --lazy-mode on`: lazy mmap loading, kills the slow cold-load ramp.
 - `--fit on --fit-target 100`: `--fit` packs weights onto the GPU, and `--fit-target`
   is the VRAM **margin in MiB to leave free** afterwards (default 1024). Lower margin =
-  more weights packed on GPU. Keep is 100 (floor-tested, see below; the older A/B ladder
+  more weights packed on GPU. Keep is 100 (floor-tested, see below. The older A/B ladder
   best was 1100 at 16.5 t/s and every margin from 100 to 1300 measures the same decode).
   On this box 800, 900, 1100 and 1300 all load
-  cleanly and hold `VmSwap` flat; 2800 loads but measured slower, and 128 crashed when
+  cleanly and hold `VmSwap` flat. 2800 loads but measured slower, and 128 crashed when
   the draft still lived fully on GPU. Load OOM: raise one step (1300). Floor test with
   `--spec-draft-cpu-moe`: `--fit-target 100` loads fine (14.2 GB used, draft and all) and
   measures the same decode as any higher margin (16.4-17.5 t/s probes, within noise of
@@ -184,12 +187,14 @@ works with the branch.
 ## Credits and license
 
 - Model code is llama.cpp, MIT license, by the ggml authors. The MTP support comes from
-  their PR #28243 (Ryan Monsurate), this repo's branch only carries the cherry-picks plus
-  the one-line fix on top. Not affiliated with ggml-org, and this is not a contribution.
+  their work: PR #28243 (Ryan Monsurate, closed unmerged 2026-10-01) superseded by
+  PR #29761 (Aman Gupta, merged 2026-10-01 into `aman/qwen4-opt`). This repo's branch
+  only carries the cherry-picks plus the one-line fix on top. Not affiliated with
+  ggml-org, and this is not a contribution.
 - Target quant: AtomicChat (`AtomicChat/Qwen3.8-Flash-Next-GGUF`).
 - MTP heads: Unsloth (`unsloth/Qwen3.8-Flash-Next-GGUF`).
-- Guide and fix: MIT, do what you want with it. If #28243 lands upstream, this whole page
-  collapses into "use master".
+- Guide and fix: MIT, do what you want with it. When the #29761 stack lands in master,
+  this whole page collapses into "use master".
 
 Issue reports welcome as issues here. Please include your GPU, RAM, the `draft acceptance`
 line, and `VmSwap` after 20 turns.
